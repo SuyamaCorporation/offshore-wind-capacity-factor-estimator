@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Offshore Wind Capacity Factor Estimator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+<div class="max-w-4xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold text-gray-900 mb-1">Offshore Wind Resource Capacity Factor Estimator</h1>
+  <p class="text-sm text-gray-500 mb-6">Estimate capacity factor and annual energy production using Weibull wind distribution and simplified power curves.</p>
+
+  <div class="bg-white rounded-xl shadow p-6 mb-6">
+    <div class="mb-4">
+      <span class="text-sm font-medium text-gray-700">Preset Turbines:</span>
+      <div class="flex flex-wrap gap-2 mt-2">
+        <button onclick="loadPreset('nrel5')" class="px-3 py-1.5 text-xs rounded-lg bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 transition">NREL 5 MW</button>
+        <button onclick="loadPreset('vestas')" class="px-3 py-1.5 text-xs rounded-lg bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 transition">Vestas V164-8MW</button>
+        <button onclick="loadPreset('siemens')" class="px-3 py-1.5 text-xs rounded-lg bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-700 transition">Siemens SG 14-222</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="meanWind">Mean Wind Speed (m/s)</label>
+        <input id="meanWind" type="number" value="9.5" step="0.1" min="4" max="20" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="weibullK">Weibull Shape k</label>
+        <input id="weibullK" type="number" value="2.1" step="0.1" min="1" max="4" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="cutIn">Cut-in Speed (m/s)</label>
+        <input id="cutIn" type="number" value="3" step="0.5" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="ratedSpeed">Rated Speed (m/s)</label>
+        <input id="ratedSpeed" type="number" value="12" step="0.5" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="cutOut">Cut-out Speed (m/s)</label>
+        <input id="cutOut" type="number" value="25" step="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="ratedPower">Rated Power (MW)</label>
+        <input id="ratedPower" type="number" value="5" step="0.5" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="numTurbines">Number of Turbines</label>
+        <input id="numTurbines" type="number" value="50" step="1" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="availability">Availability Factor (%)</label>
+        <input id="availability" type="number" value="95" step="1" min="50" max="100" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+    </div>
+    <button onclick="calculate()" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition">Calculate</button>
+  </div>
+
+  <div id="results" class="hidden">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6" id="summaryCards"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div class="bg-white rounded-xl shadow p-4">
+        <h2 class="text-base font-semibold text-gray-800 mb-3">Power Curve & Wind Distribution</h2>
+        <svg id="powerSvg" class="w-full" height="200"></svg>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <h2 class="text-base font-semibold text-gray-800 mb-3">CF Sensitivity (8–12 m/s)</h2>
+        <div id="sensitivityTable" class="overflow-x-auto"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const PRESETS = {
+  nrel5:   { cutIn: 3, ratedSpeed: 11.4, cutOut: 25, ratedPower: 5,  label: 'NREL 5MW' },
+  vestas:  { cutIn: 4, ratedSpeed: 13,   cutOut: 25, ratedPower: 8,  label: 'Vestas V164-8MW' },
+  siemens: { cutIn: 3, ratedSpeed: 10.5, cutOut: 25, ratedPower: 14, label: 'Siemens SG 14-222' },
+};
+
+function loadPreset(key) {
+  const p = PRESETS[key];
+  document.getElementById('cutIn').value = p.cutIn;
+  document.getElementById('ratedSpeed').value = p.ratedSpeed;
+  document.getElementById('cutOut').value = p.cutOut;
+  document.getElementById('ratedPower').value = p.ratedPower;
+  calculate();
+}
+
+// Weibull CDF: F(v) = 1 - exp(-(v/lambda)^k)
+// lambda = mean / Gamma(1 + 1/k)
+// Approximation: lambda ≈ mean / (1 + 0.2 / (k - 1 + 0.01))
+function gammaApprox(x) {
+  // Lanczos approximation for gamma function
+  const g = 7, c = [0.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.61502916214059,12.507343278686905,-0.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];
+  if (x < 0.5) return Math.PI / (Math.sin(Math.PI * x) * gammaApprox(1 - x));
+  x -= 1;
+  let a = c[0];
+  const t = x + g + 0.5;
+  for (let i = 1; i < g + 2; i++) a += c[i] / (x + i);
+  return Math.sqrt(2 * Math.PI) * Math.pow(t, x + 0.5) * Math.exp(-t) * a;
+}
+
+function weibullPDF(v, lambda, k) {
+  if (v <= 0) return 0;
+  return (k / lambda) * Math.pow(v / lambda, k - 1) * Math.exp(-Math.pow(v / lambda, k));
+}
+
+function powerFromSpeed(v, cutIn, ratedSpeed, cutOut, ratedPower) {
+  if (v < cutIn || v > cutOut) return 0;
+  if (v >= ratedSpeed) return ratedPower;
+  // Cubic interpolation between cut-in and rated
+  const ratio = (v - cutIn) / (ratedSpeed - cutIn);
+  return ratedPower * ratio * ratio * ratio;
+}
+
+function calcCF(meanWind, k, cutIn, ratedSpeed, cutOut, ratedPower) {
+  const lambda = meanWind / gammaApprox(1 + 1 / k);
+  const bins = 200;
+  const vMax = cutOut + 5;
+  const dv = vMax / bins;
+  let energy = 0, totalProb = 0;
+  for (let i = 0; i < bins; i++) {
+    const v = (i + 0.5) * dv;
+    const pdf = weibullPDF(v, lambda, k);
+    const P = powerFromSpeed(v, cutIn, ratedSpeed, cutOut, ratedPower);
+    energy += P * pdf * dv;
+    totalProb += pdf * dv;
+  }
+  return energy / ratedPower;
+}
+
+function calculate() {
+  const meanWind = parseFloat(document.getElementById('meanWind').value) || 9.5;
+  const k = parseFloat(document.getElementById('weibullK').value) || 2.1;
+  const cutIn = parseFloat(document.getElementById('cutIn').value) || 3;
+  const ratedSpeed = parseFloat(document.getElementById('ratedSpeed').value) || 12;
+  const cutOut = parseFloat(document.getElementById('cutOut').value) || 25;
+  const ratedPower = parseFloat(document.getElementById('ratedPower').value) || 5;
+  const numTurbines = parseInt(document.getElementById('numTurbines').value) || 50;
+  const avail = parseFloat(document.getElementById('availability').value) / 100 || 0.95;
+
+  const CF = calcCF(meanWind, k, cutIn, ratedSpeed, cutOut, ratedPower) * avail;
+  const AEP_single = CF * ratedPower * 8760; // GWh (MW * h / 1000 * 1000 = GWh... MW*h = MWh, /1000 = GWh)
+  const AEP_single_GWh = CF * ratedPower * 8760 / 1000;
+  const AEP_fleet = AEP_single_GWh * numTurbines;
+
+  const cards = [
+    { label: 'Capacity Factor', value: (CF * 100).toFixed(1) + '%', color: 'bg-blue-50 border-blue-200 text-blue-900' },
+    { label: 'Single Turbine AEP', value: AEP_single_GWh.toFixed(2) + ' GWh', color: 'bg-green-50 border-green-200 text-green-900' },
+    { label: 'Fleet AEP', value: AEP_fleet.toFixed(0) + ' GWh/yr', color: 'bg-purple-50 border-purple-200 text-purple-900' },
+    { label: 'Fleet Capacity', value: (ratedPower * numTurbines) + ' MW', color: 'bg-orange-50 border-orange-200 text-orange-900' },
+  ];
+  const cardsEl = document.getElementById('summaryCards');
+  cardsEl.innerHTML = '';
+  cards.forEach(c => {
+    const div = document.createElement('div');
+    div.className = `rounded-xl border p-4 ${c.color}`;
+    const lbl = document.createElement('div');
+    lbl.className = 'text-xs font-medium uppercase tracking-wide opacity-70';
+    lbl.textContent = c.label;
+    const val = document.createElement('div');
+    val.className = 'text-xl font-bold mt-1';
+    val.textContent = c.value;
+    div.appendChild(lbl); div.appendChild(val);
+    cardsEl.appendChild(div);
+  });
+
+  drawPowerCurve(meanWind, k, cutIn, ratedSpeed, cutOut, ratedPower);
+  drawSensitivity(k, cutIn, ratedSpeed, cutOut, ratedPower, avail);
+  document.getElementById('results').classList.remove('hidden');
+}
+
+function drawPowerCurve(meanWind, k, cutIn, ratedSpeed, cutOut, ratedPower) {
+  const svgEl = document.getElementById('powerSvg');
+  const W = svgEl.clientWidth || 400;
+  const H = 200;
+  svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svgEl.innerHTML = '';
+  const pad = {l:45,r:15,t:15,b:30};
+  const lambda = meanWind / gammaApprox(1 + 1 / k);
+  const ns = tag => document.createElementNS('http://www.w3.org/2000/svg', tag);
+  const vMax = cutOut + 3;
+  const speeds = Array.from({length:100}, (_,i) => i * vMax / 99);
+  const powers = speeds.map(v => powerFromSpeed(v, cutIn, ratedSpeed, cutOut, ratedPower));
+  const pdfs = speeds.map(v => weibullPDF(v, lambda, k));
+  const maxPdf = Math.max(...pdfs);
+
+  const sx = v => pad.l + (v/vMax)*(W-pad.l-pad.r);
+  const syP = p => pad.t + (1 - p/ratedPower) * (H-pad.t-pad.b);
+  const syD = d => pad.t + (1 - d/maxPdf) * (H-pad.t-pad.b);
+
+  // Axes
+  [['power','#3b82f6'],['dist','#f59e0b']].forEach(([type, color]) => {
+    const pts = speeds.map((v,i) => `${sx(v).toFixed(1)},${(type==='power'?syP(powers[i]):syD(pdfs[i])).toFixed(1)}`).join(' ');
+    const poly = ns('polyline');
+    poly.setAttribute('points', pts); poly.setAttribute('fill','none');
+    poly.setAttribute('stroke', color); poly.setAttribute('stroke-width','2');
+    svgEl.appendChild(poly);
+  });
+
+  // X axis
+  const xax = ns('line'); xax.setAttribute('x1',pad.l); xax.setAttribute('x2',W-pad.r);
+  xax.setAttribute('y1',H-pad.b); xax.setAttribute('y2',H-pad.b); xax.setAttribute('stroke','#9ca3af'); xax.setAttribute('stroke-width','1');
+  svgEl.appendChild(xax);
+
+  [0,5,10,15,20,25].forEach(v => {
+    if (v <= vMax) {
+      const t = ns('text'); t.setAttribute('x',sx(v)); t.setAttribute('y',H-5);
+      t.setAttribute('text-anchor','middle'); t.setAttribute('font-size','9'); t.setAttribute('fill','#6b7280');
+      t.textContent = v; svgEl.appendChild(t);
+    }
+  });
+
+  // Legend
+  const leg = [['blue','Power Curve'],['#f59e0b','Wind PDF']];
+  leg.forEach(([c,label],i) => {
+    const rect = ns('rect'); rect.setAttribute('x',W-70); rect.setAttribute('y',pad.t+i*14);
+    rect.setAttribute('width',10); rect.setAttribute('height',4); rect.setAttribute('fill',c);
+    svgEl.appendChild(rect);
+    const t = ns('text'); t.setAttribute('x',W-56); t.setAttribute('y',pad.t+i*14+4);
+    t.setAttribute('font-size','8'); t.setAttribute('fill','#6b7280'); t.textContent = label;
+    svgEl.appendChild(t);
+  });
+}
+
+function drawSensitivity(k, cutIn, ratedSpeed, cutOut, ratedPower, avail) {
+  const container = document.getElementById('sensitivityTable');
+  container.innerHTML = '';
+  const tbl = document.createElement('table');
+  tbl.className = 'w-full text-sm';
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr class="bg-gray-50"><th class="text-right p-2 font-medium text-gray-600 text-xs">Mean Wind (m/s)</th><th class="text-right p-2 font-medium text-gray-600 text-xs">CF (%)</th><th class="text-right p-2 font-medium text-gray-600 text-xs">Single AEP (GWh)</th></tr>';
+  tbl.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  [8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12].forEach((v, i) => {
+    const cf = calcCF(v, k, cutIn, ratedSpeed, cutOut, ratedPower) * avail;
+    const aep = cf * ratedPower * 8760 / 1000;
+    const tr = document.createElement('tr');
+    tr.className = i % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+    [v.toFixed(1), (cf*100).toFixed(1), aep.toFixed(2)].forEach(c => {
+      const td = document.createElement('td');
+      td.className = 'p-2 text-right text-xs text-gray-700';
+      td.textContent = c;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  container.appendChild(tbl);
+}
+
+loadPreset('nrel5');
+</script>
+</body>
+</html>
